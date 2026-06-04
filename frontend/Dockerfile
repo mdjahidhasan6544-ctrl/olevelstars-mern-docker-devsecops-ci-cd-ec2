@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20.15-alpine AS deps
+FROM node:20.15-slim AS deps
 WORKDIR /app
 
 COPY package*.json ./
