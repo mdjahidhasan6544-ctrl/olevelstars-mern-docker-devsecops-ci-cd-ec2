@@ -111,6 +111,8 @@ $RECYCLE.BIN/
 # -----------------------------------------------------------------------------
 # Security scanning output (keep reports out of repo)
 # -----------------------------------------------------------------------------
+security-reports/
 trivy-results/
+.trivycache/
 snyk-results/
 *.sarif

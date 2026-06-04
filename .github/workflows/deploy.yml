@@ -24,18 +24,29 @@ env:
   FRONTEND_PORT_VALUE: ${{ vars.FRONTEND_PORT || '80' }}
   BACKEND_PORT_VALUE: ${{ vars.BACKEND_PORT || '5000' }}
   FRONTEND_PUBLIC_SITE_URL_VALUE: ${{ vars.FRONTEND_PUBLIC_SITE_URL || '' }}
+  TRIVY_VERSION: v0.71.0
+  TRIVY_CACHE_DIR: .trivycache
+  TRIVY_FS_SCANNERS: vuln,secret,misconfig
+  TRIVY_IMAGE_SCANNERS: vuln,secret
+  TRIVY_GATE_SEVERITY: HIGH,CRITICAL
 
 jobs:
   test-and-scan:
     name: Test and scan source
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -92,46 +103,119 @@ jobs:
 
       - name: Upload dependency audit reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: npm-audit-reports
           path: security-reports/*-npm-audit.json
           if-no-files-found: ignore
 
       - name: Run SonarQube scan
-        uses: SonarSource/sonarqube-scan-action@v6
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-      - name: Run Trivy filesystem scan
-        uses: aquasecurity/trivy-action@v0.35.0
+      - name: Prepare Trivy cache key
+        id: trivy-cache-date
+        shell: bash
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Trivy database
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          scan-type: fs
-          scan-ref: .
-          scanners: vuln,secret,misconfig
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          format: sarif
-          output: security-reports/trivy-fs.sarif
+          path: ${{ env.TRIVY_CACHE_DIR }}
+          key: trivy-db-${{ runner.os }}-${{ steps.trivy-cache-date.outputs.date }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          cache: true
+
+      - name: Print Trivy filesystem gate findings
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p security-reports
+
+          trivy fs \
+            --scanners "$TRIVY_FS_SCANNERS" \
+            --severity "$TRIVY_GATE_SEVERITY" \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --cache-dir "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format table \
+            --exit-code 0 \
+            .
+
+      - name: Generate Trivy filesystem SARIF
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p security-reports
+
+          trivy fs \
+            --scanners "$TRIVY_FS_SCANNERS" \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --cache-dir "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format sarif \
+            --output security-reports/trivy-fs.sarif \
+            --exit-code 0 \
+            .
+
+      - name: Upload Trivy filesystem SARIF to GitHub Security
+        if: always() && hashFiles('security-reports/trivy-fs.sarif') != ''
+        uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7 # v4
+        with:
+          sarif_file: security-reports/trivy-fs.sarif
+          category: trivy-filesystem
 
       - name: Upload Trivy filesystem report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: trivy-filesystem-report
           path: security-reports/trivy-fs.sarif
           if-no-files-found: ignore
 
+      - name: Enforce Trivy filesystem gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          trivy fs \
+            --scanners "$TRIVY_FS_SCANNERS" \
+            --severity "$TRIVY_GATE_SEVERITY" \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --cache-dir "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format table \
+            --exit-code 1 \
+            .
+
   build-scan-push:
     name: Build, scan, and push images
     runs-on: ubuntu-24.04
     needs: test-and-scan
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Normalize image metadata
         shell: bash
@@ -151,7 +235,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build frontend image
         shell: bash
@@ -173,38 +257,145 @@ jobs:
             --tag "$BACKEND_IMAGE:latest" \
             "$BACKEND_DIR"
 
-      - name: Run Trivy frontend image scan
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          image-ref: ${{ env.FRONTEND_IMAGE }}:${{ env.IMAGE_TAG }}
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          format: sarif
-          output: trivy-frontend-image.sarif
+      - name: Prepare Trivy cache key
+        id: trivy-cache-date
+        shell: bash
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
 
-      - name: Run Trivy backend image scan
-        uses: aquasecurity/trivy-action@v0.35.0
+      - name: Cache Trivy database
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          image-ref: ${{ env.BACKEND_IMAGE }}:${{ env.IMAGE_TAG }}
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-          format: sarif
-          output: trivy-backend-image.sarif
+          path: ${{ env.TRIVY_CACHE_DIR }}
+          key: trivy-db-${{ runner.os }}-${{ steps.trivy-cache-date.outputs.date }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          cache: true
+
+      - name: Print Trivy image gate findings
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          trivy image \
+            --scanners "$TRIVY_IMAGE_SCANNERS" \
+            --severity "$TRIVY_GATE_SEVERITY" \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --cache-dir "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format table \
+            --exit-code 0 \
+            "$FRONTEND_IMAGE:$IMAGE_TAG"
+
+          trivy image \
+            --scanners "$TRIVY_IMAGE_SCANNERS" \
+            --severity "$TRIVY_GATE_SEVERITY" \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --cache-dir "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format table \
+            --exit-code 0 \
+            "$BACKEND_IMAGE:$IMAGE_TAG"
+
+      - name: Generate Trivy image SARIF
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p security-reports
+
+          trivy image \
+            --scanners "$TRIVY_IMAGE_SCANNERS" \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --cache-dir "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format sarif \
+            --output security-reports/trivy-frontend-image.sarif \
+            --exit-code 0 \
+            "$FRONTEND_IMAGE:$IMAGE_TAG"
+
+          trivy image \
+            --scanners "$TRIVY_IMAGE_SCANNERS" \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --cache-dir "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format sarif \
+            --output security-reports/trivy-backend-image.sarif \
+            --exit-code 0 \
+            "$BACKEND_IMAGE:$IMAGE_TAG"
+
+      - name: Upload Trivy frontend image SARIF to GitHub Security
+        if: always() && hashFiles('security-reports/trivy-frontend-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7 # v4
+        with:
+          sarif_file: security-reports/trivy-frontend-image.sarif
+          category: trivy-frontend-image
+
+      - name: Upload Trivy backend image SARIF to GitHub Security
+        if: always() && hashFiles('security-reports/trivy-backend-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7 # v4
+        with:
+          sarif_file: security-reports/trivy-backend-image.sarif
+          category: trivy-backend-image
 
       - name: Upload Trivy image reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: trivy-image-reports
-          path: |
-            trivy-frontend-image.sarif
-            trivy-backend-image.sarif
+          path: security-reports/trivy-*-image.sarif
           if-no-files-found: ignore
 
+      - name: Enforce Trivy image gate
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          frontend_status=0
+          backend_status=0
+
+          trivy image \
+            --scanners "$TRIVY_IMAGE_SCANNERS" \
+            --severity "$TRIVY_GATE_SEVERITY" \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --cache-dir "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format table \
+            --exit-code 1 \
+            "$FRONTEND_IMAGE:$IMAGE_TAG" || frontend_status=$?
+
+          trivy image \
+            --scanners "$TRIVY_IMAGE_SCANNERS" \
+            --severity "$TRIVY_GATE_SEVERITY" \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --cache-dir "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format table \
+            --exit-code 1 \
+            "$BACKEND_IMAGE:$IMAGE_TAG" || backend_status=$?
+
+          if [ "$frontend_status" -ne 0 ] || [ "$backend_status" -ne 0 ]; then
+            echo "Trivy image gate failed on HIGH or CRITICAL findings."
+            exit 1
+          fi
+
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -225,7 +416,9 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
       - name: Prepare deployment metadata
         shell: bash
