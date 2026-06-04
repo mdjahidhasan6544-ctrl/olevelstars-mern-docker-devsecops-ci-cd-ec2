@@ -174,7 +174,7 @@ jobs:
             "$BACKEND_DIR"
 
       - name: Run Trivy frontend image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.FRONTEND_IMAGE }}:${{ env.IMAGE_TAG }}
           severity: HIGH,CRITICAL
@@ -184,7 +184,7 @@ jobs:
           output: trivy-frontend-image.sarif
 
       - name: Run Trivy backend image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.BACKEND_IMAGE }}:${{ env.IMAGE_TAG }}
           severity: HIGH,CRITICAL
