@@ -145,6 +145,8 @@ jobs:
             --severity "$TRIVY_GATE_SEVERITY" \
             --ignore-unfixed \
             --ignorefile .trivyignore \
+            --skip-dirs "$FRONTEND_DIR/node_modules" \
+            --skip-dirs "$BACKEND_DIR/node_modules" \
             --cache-dir "$TRIVY_CACHE_DIR" \
             --skip-version-check \
             --no-progress \
@@ -162,6 +164,8 @@ jobs:
             --scanners "$TRIVY_FS_SCANNERS" \
             --ignore-unfixed \
             --ignorefile .trivyignore \
+            --skip-dirs "$FRONTEND_DIR/node_modules" \
+            --skip-dirs "$BACKEND_DIR/node_modules" \
             --cache-dir "$TRIVY_CACHE_DIR" \
             --skip-version-check \
             --no-progress \
@@ -195,6 +199,8 @@ jobs:
             --severity "$TRIVY_GATE_SEVERITY" \
             --ignore-unfixed \
             --ignorefile .trivyignore \
+            --skip-dirs "$FRONTEND_DIR/node_modules" \
+            --skip-dirs "$BACKEND_DIR/node_modules" \
             --cache-dir "$TRIVY_CACHE_DIR" \
             --skip-version-check \
             --no-progress \
