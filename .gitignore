@@ -1,0 +1,116 @@
+# =============================================================================
+# .gitignore — OLevelStars (Docker / DevSecOps)
+# Best-practice: never commit secrets, build artefacts, or runtime data.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Dependencies
+# -----------------------------------------------------------------------------
+node_modules/
+.pnp
+.pnp.js
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# -----------------------------------------------------------------------------
+# Build artefacts (Docker builds these inside the container — never commit)
+# -----------------------------------------------------------------------------
+dist/
+build/
+.next/
+.vite/
+*.tsbuildinfo
+
+# -----------------------------------------------------------------------------
+# Environment / Secrets — ALL secrets are injected at runtime via GitHub Actions Secrets.
+# NO .env files of any kind belong in this repository.
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+.env.local
+.env.production
+.env.staging
+.env.development
+
+# Private keys and secret material
+*.pem
+*.key
+id_rsa
+id_ed25519
+secrets/
+.docker/secrets/
+
+# Docker-specific env override files (generated at deploy time by CI/CD)
+docker-compose.override.yml
+
+# -----------------------------------------------------------------------------
+# Runtime & ephemeral data
+# -----------------------------------------------------------------------------
+.mongodb-data/
+.npm-cache/
+.codex-runtime/
+uploads/
+tmp/
+temp/
+
+# -----------------------------------------------------------------------------
+# Logs
+# -----------------------------------------------------------------------------
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# -----------------------------------------------------------------------------
+# Coverage & test output
+# -----------------------------------------------------------------------------
+coverage/
+.nyc_output/
+test-results/
+*.lcov
+
+# -----------------------------------------------------------------------------
+# Docker runtime files (never commit)
+# -----------------------------------------------------------------------------
+.dockerignore.local
+docker-compose.local.yml
+
+# -----------------------------------------------------------------------------
+# OS artefacts
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# -----------------------------------------------------------------------------
+# Editor / IDE
+# -----------------------------------------------------------------------------
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+*.swo
+.project
+.classpath
+.settings/
+
+# -----------------------------------------------------------------------------
+# Security scanning output (keep reports out of repo)
+# -----------------------------------------------------------------------------
+trivy-results/
+snyk-results/
+*.sarif

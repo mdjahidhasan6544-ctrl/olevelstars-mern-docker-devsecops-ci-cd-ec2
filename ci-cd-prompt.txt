@@ -1,0 +1,856 @@
+You are a senior DevOps engineer, DevSecOps automation expert, and production CI/CD architect.
+
+I have an existing MERN stack GitHub repository. Your task is to inspect the repository and implement a production-ready Docker Compose deployment pipeline for AWS EC2 Ubuntu 24.04.
+
+Use Docker and Docker Compose only.
+
+Do not use:
+
+* Kubernetes
+* AWS ECS
+* Terraform
+* Ansible
+* AWS Elastic Beanstalk
+* Any managed container platform
+
+==================================================
+PROJECT CONTEXT
+===============
+
+Application stack:
+
+* Frontend: React
+* Backend: Node.js / Express
+* Database: MongoDB Atlas
+
+Production server:
+
+* AWS EC2 Ubuntu 24.04
+* Docker and Docker Compose plugin will be installed manually before deployment
+* GitHub Actions will deploy directly to this EC2 machine through SSH
+* MongoDB will be MongoDB Atlas only
+* Do not create a local MongoDB Docker container
+
+Container registry:
+
+* Docker Hub
+
+Deployment strategy:
+
+* On push to the main branch, GitHub Actions should:
+
+  1. test and scan the code
+  2. build frontend and backend Docker images
+  3. scan Docker images
+  4. push images to Docker Hub
+  5. SSH into EC2
+  6. pull the new images
+  7. recreate containers using Docker Compose
+  8. verify deployment
+  9. safely remove unused old Docker images after successful deployment
+
+==================================================
+START MODE
+==========
+
+Start in DRY-RUN REVIEW MODE.
+
+First, inspect the repository and print:
+
+* detected project structure
+* detected frontend path
+* detected backend path
+* detected package managers
+* detected build/start/test/lint scripts
+* detected unsafe secrets or localhost usage
+* files you plan to create or update
+* exact implementation plan
+
+Do not modify files until I approve.
+
+If I explicitly provide:
+
+IMPLEMENT_NOW=true
+
+then you may inspect and implement in one run.
+
+When implementing, create changes on a new branch named:
+
+devops/docker-ec2-cicd
+
+Do not commit directly to main.
+
+After implementation, show:
+
+* git diff summary
+* files created or modified
+* recommended commit message
+
+==================================================
+CRITICAL SECURITY RULES
+=======================
+
+Never commit, create, or hardcode real secrets.
+
+The repository must not contain:
+
+* MongoDB Atlas connection string
+* JWT secret
+* admin username or password
+* Docker Hub token
+* GitHub PAT
+* SonarQube token
+* SSH private key
+* AWS key
+* API keys
+* production passwords
+* production localhost URLs
+
+Production must not depend on:
+
+* localhost
+* 127.0.0.1
+* mongodb://localhost
+* hardcoded backend URLs
+* hardcoded MongoDB URLs
+
+Use environment variables for all runtime configuration.
+
+Localhost is allowed only inside clearly marked local development examples, such as `.env.example`, but production files must not rely on it.
+
+Frontend environment variables must be public only.
+
+Never pass secrets to frontend build args.
+
+For Vite:
+
+* Only VITE_* variables are allowed
+* They must be non-secret
+
+For Create React App:
+
+* Only REACT_APP_* variables are allowed
+* They must be non-secret
+
+Prefer `/api` reverse proxy instead of hardcoded frontend API URLs.
+
+==================================================
+REQUIRED GITHUB SECRETS
+=======================
+
+Use these GitHub Secrets:
+
+* DOCKERHUB_USERNAME
+* DOCKERHUB_TOKEN
+* EC2_HOST
+* EC2_USER
+* EC2_SSH_PRIVATE_KEY
+* SONAR_HOST_URL
+* SONAR_TOKEN
+* MONGODB_URI
+* JWT_SECRET
+* ADMIN_USERNAME
+* ADMIN_PASSWORD
+
+If the project needs additional runtime secrets, detect them and document them clearly.
+
+Do not use EC2_DEPLOY_PATH as a secret.
+
+Instead, derive the deploy path automatically:
+
+DEPLOY_PATH="/opt/${REPO_NAME}"
+
+If REPO_NAME is not provided as a repository variable, derive it safely from the GitHub repository name.
+
+==================================================
+OPTIONAL GITHUB REPOSITORY VARIABLES
+====================================
+
+Use GitHub repository variables for non-secret values only:
+
+* REPO_NAME
+* NODE_ENV
+* FRONTEND_PUBLIC_SITE_URL
+* FRONTEND_PORT
+* BACKEND_PORT
+
+Default NODE_ENV to production during deployment.
+
+Avoid FRONTEND_PUBLIC_API_URL unless absolutely required.
+
+Preferred API routing:
+
+* frontend Nginx should proxy `/api` to the backend service inside the Docker network
+* backend should not be publicly exposed unless required
+
+Do not store secrets in repository variables.
+
+==================================================
+PHASE 1 — REPOSITORY INSPECTION
+===============================
+
+Before modifying files, inspect the repository carefully.
+
+Detect and report:
+
+1. Frontend path
+
+2. Backend path
+
+3. Frontend package manager:
+
+   * npm
+   * yarn
+   * pnpm
+
+4. Backend package manager:
+
+   * npm
+   * yarn
+   * pnpm
+
+5. Frontend framework/build type:
+
+   * Vite React
+   * Create React App
+   * Next.js
+   * other React setup
+
+6. Backend framework:
+
+   * Express
+   * NestJS
+   * other Node.js framework
+
+7. Important package.json scripts:
+
+   * install
+   * dev
+   * build
+   * start
+   * test
+   * lint
+
+8. Backend entrypoint
+
+9. Backend port
+
+10. Frontend build output directory:
+
+* dist
+* build
+* .next
+* other
+
+11. Existing environment variable usage
+
+12. Any hardcoded unsafe values:
+
+* localhost
+* 127.0.0.1
+* mongodb://localhost
+* mongodb+srv://
+* hardcoded MongoDB URI
+* hardcoded JWT secret
+* hardcoded admin credentials
+* hardcoded API keys
+* private keys
+
+After inspection, print a concise repository analysis summary.
+
+==================================================
+PHASE 2 — IMPLEMENTATION PLAN
+=============================
+
+After inspection, create a short implementation plan before editing files.
+
+The plan must include:
+
+* Docker strategy for frontend
+* Docker strategy for backend
+* Docker Compose production strategy
+* GitHub Actions CI/CD strategy
+* DevSecOps scanning strategy
+* EC2 deployment strategy
+* MongoDB Atlas integration strategy
+* Secret handling strategy
+* Rollback strategy
+
+If in DRY-RUN REVIEW MODE, stop after the plan and wait for approval.
+
+If IMPLEMENT_NOW=true, continue implementation.
+
+==================================================
+PHASE 3 — DOCKER IMPLEMENTATION
+===============================
+
+Create or update the frontend Dockerfile.
+
+Frontend Docker requirements:
+
+* Use multi-stage builds.
+* For Vite React or Create React App:
+
+  * build static assets
+  * serve them using Nginx or another minimal production static server
+* For Next.js:
+
+  * use an appropriate production Next.js Docker build
+* Do not copy `.env` files into the image.
+* Do not bake secrets into the image.
+* Do not hardcode localhost API URLs.
+* Prefer Nginx reverse proxy from `/api` to backend service.
+* Add or update frontend `.dockerignore`.
+* Use a minimal production image.
+* Add a healthcheck if practical.
+* Expose only the required internal port.
+
+If using Nginx for frontend:
+
+* create an Nginx config for production
+* serve static frontend files
+* proxy `/api` requests to backend service over the Docker network
+* do not hardcode EC2 public IP in Nginx config
+* do not expose backend publicly unless necessary
+
+Create or update the backend Dockerfile.
+
+Backend Docker requirements:
+
+* Use a production Node.js image.
+* Use multi-stage build if helpful.
+* Use `npm ci` when `package-lock.json` exists.
+* Use the correct equivalent for yarn or pnpm.
+* Install only production dependencies in the final image.
+* Do not copy `.env` files into the image.
+* Run as a non-root user.
+* Ensure the backend listens on `0.0.0.0`, not only `localhost`.
+* Use environment variables for:
+
+  * MongoDB Atlas URI
+  * JWT secret
+  * admin username
+  * admin password
+  * frontend URL
+  * CORS origin
+  * port
+* Add or update backend `.dockerignore`.
+* Add a healthcheck if the backend has a health endpoint.
+* If no health endpoint exists, add a simple `/health` route only if it is safe and consistent with the project style.
+* In production, fail fast if required secrets are missing.
+* Do not print secret values in application logs.
+
+==================================================
+PHASE 4 — MONGODB ATLAS REQUIREMENTS
+====================================
+
+MongoDB Atlas must be used as the only database.
+
+Do not create a MongoDB service in Docker Compose.
+
+Backend must read MongoDB connection from:
+
+MONGODB_URI
+
+If current code uses any hardcoded MongoDB URL, replace it with environment variable usage.
+
+Add production-safe validation:
+
+* If NODE_ENV=production and MONGODB_URI is missing, backend must fail with a clear error.
+* Do not print the MongoDB URI in logs.
+
+Document that the EC2 public IP must be whitelisted in MongoDB Atlas Network Access.
+
+Do not expose MongoDB ports on EC2.
+
+==================================================
+PHASE 5 — DOCKER COMPOSE PRODUCTION FILE
+========================================
+
+Create:
+
+docker-compose.prod.yml
+
+Services:
+
+1. frontend
+2. backend
+
+Do not include a MongoDB container.
+
+Docker Compose requirements:
+
+* Use Docker Hub images:
+  docker.io/${DOCKERHUB_USERNAME}/${REPO_NAME}-frontend:${IMAGE_TAG}
+  docker.io/${DOCKERHUB_USERNAME}/${REPO_NAME}-backend:${IMAGE_TAG}
+
+* Use:
+  restart: unless-stopped
+
+* Use a dedicated Docker network.
+
+* Use environment variables from an EC2-side `.env` file.
+
+* Do not hardcode secrets.
+
+* Do not hardcode localhost URLs.
+
+* Add healthchecks where practical.
+
+* Use depends_on with health conditions where supported.
+
+* Add safe container security options where they do not break the app:
+
+  * security_opt:
+
+    * no-new-privileges:true
+  * cap_drop:
+
+    * ALL
+
+* Use read_only only if the app does not require write access.
+  If read_only is used, configure writable tmp/cache/upload directories correctly.
+
+* Avoid named volumes unless required.
+
+* Do not delete volumes during deployment.
+
+Port strategy:
+
+* Frontend should normally expose:
+  80:80
+
+* Backend should preferably stay internal to the Docker network.
+
+* If backend must be public, expose it intentionally and document the reason.
+
+Preferred production routing:
+
+* Frontend Nginx serves React static files.
+* Frontend Nginx proxies `/api` to backend service inside Docker network.
+* Avoid hardcoded public backend URLs.
+
+==================================================
+PHASE 6 — GITHUB ACTIONS WORKFLOW FILE
+======================================
+
+Create the CI/CD workflow file at:
+
+.github/workflows/deploy.yml
+
+This YAML file must automate the full pipeline.
+
+Workflow triggers:
+
+* push to main
+* workflow_dispatch
+
+Workflow requirements:
+
+* Use least-privilege GitHub Actions permissions.
+* Use concurrency to prevent overlapping deployments.
+* Use Docker Buildx.
+* Use Docker Hub login with secrets.
+* Use immutable image tags based on Git SHA.
+* Also push `latest` tag for convenience.
+* Do not print secrets in logs.
+* Use bash strict mode in shell scripts:
+
+set -euo pipefail
+
+GitHub Actions pipeline stages:
+
+1. Checkout repository
+2. Setup Node.js
+3. Install frontend dependencies
+4. Install backend dependencies
+5. Run frontend lint if script exists
+6. Run frontend tests if script exists
+7. Run frontend build if script exists
+8. Run backend lint if script exists
+9. Run backend tests if script exists
+10. Run dependency vulnerability scan
+11. Run SonarQube scan
+12. Run Trivy filesystem scan
+13. Build frontend Docker image
+14. Build backend Docker image
+15. Run Trivy scan on frontend image
+16. Run Trivy scan on backend image
+17. Push images to Docker Hub
+18. SSH into AWS EC2 Ubuntu server
+19. Generate/update production `.env` on EC2 from GitHub Secrets
+20. Generate/update `docker-compose.prod.yml` on EC2
+21. Pull new Docker Hub images on EC2
+22. Recreate containers with Docker Compose
+23. Verify deployment
+24. Save deployed image tag for rollback
+25. Prune old unused Docker images safely
+
+Security scan policy:
+
+* Trivy filesystem scan must run before Docker build.
+* Trivy image scan must run before Docker push.
+* Fail on CRITICAL vulnerabilities.
+* Fail on HIGH vulnerabilities unless the workflow clearly documents why HIGH is temporarily report-only.
+* Upload scan reports as GitHub Actions artifacts.
+
+Do not only create Dockerfiles and Docker Compose.
+The final deliverable must include a working GitHub Actions CI/CD YAML workflow at:
+
+.github/workflows/deploy.yml
+
+==================================================
+PHASE 7 — DEVSECOPS SCANNING
+============================
+
+Implement DevSecOps checks suitable for a MERN project.
+
+Required:
+
+1. Trivy filesystem scan
+2. Trivy Docker image scan
+3. SonarQube scan
+4. npm audit or OWASP Dependency-Check
+
+For npm audit:
+
+* Run separately for frontend and backend.
+* Use package-manager-specific commands.
+* Do not ignore severe findings silently.
+
+For SonarQube:
+
+* Add `sonar-project.properties` if helpful.
+* Scan frontend and backend source folders.
+* Exclude:
+
+  * node_modules
+  * dist
+  * build
+  * coverage
+  * .next
+  * Docker artifacts
+  * generated files
+
+If coverage files exist, configure coverage import.
+
+Security report handling:
+
+* Save Trivy reports as artifacts.
+* Save dependency audit reports as artifacts where possible.
+* Save SonarQube scan result link or summary in workflow output if available.
+* Do not upload secrets or `.env` files as artifacts.
+
+==================================================
+PHASE 8 — EC2 DEPLOYMENT AUTOMATION
+===================================
+
+GitHub Actions must SSH into EC2 and deploy automatically.
+
+Deployment steps on EC2:
+
+1. Derive deploy path:
+
+   DEPLOY_PATH="/opt/${REPO_NAME}"
+
+2. Create deploy directory if missing:
+
+   sudo mkdir -p "$DEPLOY_PATH"
+   sudo chown -R "$EC2_USER":"$EC2_USER" "$DEPLOY_PATH"
+
+3. Copy or generate:
+
+   $DEPLOY_PATH/docker-compose.prod.yml
+   $DEPLOY_PATH/.env
+
+4. The EC2 `.env` file must include:
+
+   DOCKERHUB_USERNAME
+   REPO_NAME
+   IMAGE_TAG
+   NODE_ENV=production
+   MONGODB_URI
+   JWT_SECRET
+   ADMIN_USERNAME
+   ADMIN_PASSWORD
+   BACKEND_PORT
+   FRONTEND_PORT
+   Any additional required runtime variables
+
+5. Never print secret values in logs.
+
+6. Login to Docker Hub on EC2 using DOCKERHUB_TOKEN.
+
+7. Pull new images:
+
+   docker compose -f docker-compose.prod.yml pull
+
+8. Recreate containers:
+
+   docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+9. Verify containers:
+
+   docker compose -f docker-compose.prod.yml ps
+
+10. After successful deployment only, clean unused images safely:
+
+docker image prune -f
+
+11. Save rollback tags:
+
+If CURRENT_IMAGE_TAG exists:
+
+* copy CURRENT_IMAGE_TAG to PREVIOUS_IMAGE_TAG
+
+Then write the new IMAGE_TAG to:
+
+$DEPLOY_PATH/CURRENT_IMAGE_TAG
+
+Do not run:
+
+* docker system prune -a --volumes
+* docker volume prune
+* broad rm -rf commands
+* commands that delete persistent data
+
+Failure behavior:
+
+* If deployment fails, show:
+
+  * docker compose ps
+  * recent frontend logs
+  * recent backend logs
+* Do not print secrets.
+* Exit with non-zero status.
+
+==================================================
+PHASE 9 — ROLLBACK STRATEGY
+===========================
+
+Implement and document manual rollback.
+
+After each successful deployment, EC2 should store:
+
+* CURRENT_IMAGE_TAG
+* PREVIOUS_IMAGE_TAG
+
+Document rollback command flow:
+
+1. SSH into EC2
+
+2. Go to deploy path:
+
+   cd /opt/<repo-name>
+
+3. Set IMAGE_TAG to previous tag in `.env`
+
+4. Pull previous images:
+
+   docker compose -f docker-compose.prod.yml pull
+
+5. Recreate containers:
+
+   docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+6. Verify:
+
+   docker compose -f docker-compose.prod.yml ps
+
+Do not automatically rollback unless the workflow can verify health safely.
+Prefer documented manual rollback.
+
+==================================================
+PHASE 10 — SECRET AND LOCALHOST CLEANUP
+=======================================
+
+Search the repository for unsafe production values:
+
+* localhost
+* 127.0.0.1
+* mongodb://localhost
+* mongodb+srv://
+* JWT_SECRET hardcoded values
+* admin passwords
+* API keys
+* private keys
+* tokens
+
+Fix unsafe production code.
+
+Update `.gitignore` to include:
+
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+secrets/
+.docker/secrets/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+node_modules/
+dist/
+build/
+coverage/
+.next/
+
+Create or update `.env.example` files with placeholders only.
+
+Example placeholders:
+
+NODE_ENV=development
+PORT=5000
+MONGODB_URI=replace_me
+JWT_SECRET=replace_me
+ADMIN_USERNAME=replace_me
+ADMIN_PASSWORD=replace_me
+CORS_ORIGIN=replace_me
+
+Do not include real values.
+
+==================================================
+PHASE 11 — HTTPS / TLS NOTE
+===========================
+
+Do not implement HTTPS unless the repository already has a clear TLS setup.
+
+Document future HTTPS options in DEPLOYMENT.md:
+
+* Caddy reverse proxy
+* Nginx reverse proxy with Let’s Encrypt
+* AWS Application Load Balancer
+* Cloudflare proxy
+
+Do not commit private certificates or keys.
+
+For current implementation, expose HTTP port 80 only unless existing project requirements say otherwise.
+
+==================================================
+PHASE 12 — DOCUMENTATION
+========================
+
+Create or update:
+
+DEPLOYMENT.md
+
+Include:
+
+1. Architecture summary
+2. Required GitHub Secrets
+3. Optional GitHub Repository Variables
+4. Docker Hub image naming
+5. EC2 preparation checklist
+6. MongoDB Atlas Network Access note
+7. Deployment workflow explanation
+8. How to verify deployment
+9. How to check logs
+10. How to rollback manually using a previous IMAGE_TAG
+11. Security checklist
+12. HTTPS/TLS future setup note
+
+EC2 preparation section must mention:
+
+* Docker and Docker Compose plugin must be installed manually.
+
+* Verify installation:
+
+  docker --version
+  docker compose version
+
+* Add EC2 user to docker group if needed:
+
+  sudo usermod -aG docker $USER
+
+* Security group recommendations:
+
+  * allow SSH 22 only from trusted IPs
+  * allow HTTP 80
+  * allow HTTPS 443 if TLS is configured
+  * do not expose MongoDB
+  * avoid exposing backend port publicly unless required
+
+MongoDB Atlas note:
+
+* Whitelist the EC2 public IP in MongoDB Atlas Network Access.
+* Avoid 0.0.0.0/0 in production unless temporarily testing.
+* Never commit MongoDB credentials.
+
+==================================================
+PHASE 13 — VALIDATION
+=====================
+
+After implementation, validate:
+
+1. Dockerfiles are syntactically correct.
+2. docker-compose.prod.yml references only Docker Hub images.
+3. docker-compose.prod.yml has no MongoDB service.
+4. docker-compose.prod.yml has no hardcoded secrets.
+5. docker-compose.prod.yml does not require localhost.
+6. GitHub Actions workflow exists at `.github/workflows/deploy.yml`.
+7. GitHub Actions workflow has no plaintext secrets.
+8. GitHub Actions uses secrets and variables correctly.
+9. GitHub Actions deploys to EC2 over SSH.
+10. GitHub Actions pulls new Docker Hub images on EC2.
+11. GitHub Actions recreates containers with Docker Compose.
+12. GitHub Actions prunes old unused images safely only after successful deployment.
+13. `.gitignore` protects secrets.
+14. `.env.example` contains placeholders only.
+15. Production code does not require localhost.
+16. Backend reads MONGODB_URI from environment variables.
+17. Backend does not print MONGODB_URI or secrets in logs.
+18. Deployment does not require EC2_DEPLOY_PATH.
+19. Deployment does not delete Docker volumes.
+20. Trivy, SonarQube, and dependency scans are included.
+21. DEPLOYMENT.md explains setup clearly.
+22. Rollback tag files are documented and used.
+
+==================================================
+FINAL OUTPUT REQUIRED
+=====================
+
+After completing the work, print:
+
+1. Detected project structure
+2. Files created or modified
+3. Docker images that will be built
+4. GitHub Actions workflow file path
+5. GitHub Secrets required
+6. GitHub Repository Variables optional/required
+7. EC2 preparation commands
+8. MongoDB Atlas setup reminder
+9. How to trigger deployment
+10. How to verify deployment
+11. How to rollback manually
+12. Any assumptions made
+13. Recommended commit message
+
+==================================================
+NON-NEGOTIABLE CONSTRAINTS
+==========================
+
+* MERN stack only
+* MongoDB Atlas only
+* Docker Compose only
+* AWS EC2 Ubuntu 24.04 only
+* Docker and Docker Compose installed manually
+* GitHub Actions must create `.github/workflows/deploy.yml`
+* GitHub Actions must deploy automatically on push to main
+* No Kubernetes
+* No ECS
+* No Terraform
+* No Ansible
+* No local MongoDB container
+* No secrets in repository
+* No hardcoded production localhost URLs
+* No EC2_DEPLOY_PATH secret
+* Docker must pull new images and replace existing containers automatically
+* Old unused images may be pruned safely only after successful deployment
+* Do not delete Docker volumes
+* Do not expose secrets in logs
+* Do not expose backend publicly unless required
+* Prefer frontend Nginx `/api` reverse proxy to backend over Docker network
