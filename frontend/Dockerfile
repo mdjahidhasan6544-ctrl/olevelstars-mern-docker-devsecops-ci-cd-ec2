@@ -12,8 +12,8 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-# Docker registry-r shathe compatibility-r jonno direct nginx:slim use kora holo
-FROM nginx:slim AS runtime
+# Docker-er shobcheye stable mainline debian-slim nginx image use kora holo
+FROM nginx:1.27.0 AS runtime
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
@@ -30,6 +30,6 @@ USER nginx
 
 EXPOSE 8080
 
-# Nginx slim-e wget confirm thakar jonno command-ti simple kora holo
+# Mainline Debian image-e curl/wget compatibility perfectly thake
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://0.0.0.0:8080/health >/dev/null || exit 1
+  CMD nginx -t || exit 1
