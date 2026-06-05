@@ -12,8 +12,8 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-# Nginx slim tag-ti correct kora holo (1.27.0-slim)
-FROM nginx:1.27.0-slim AS runtime
+# Docker registry-r shathe compatibility-r jonno direct nginx:slim use kora holo
+FROM nginx:slim AS runtime
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
@@ -30,7 +30,6 @@ USER nginx
 
 EXPOSE 8080
 
-# Debian slim-e curl default-e na thakle wget use korai safe, 
-# tai wget command-ti debian compatible kora holo
+# Nginx slim-e wget confirm thakar jonno command-ti simple kora holo
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget --spider -q http://0.0.0.0:8080/health || exit 1
+  CMD wget -qO- http://0.0.0.0:8080/health >/dev/null || exit 1
