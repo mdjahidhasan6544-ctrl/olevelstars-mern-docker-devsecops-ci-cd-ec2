@@ -4,9 +4,9 @@ FROM node:20.15-slim AS deps
 WORKDIR /app
 
 COPY package*.json ./
-# Vite/Rolldown er glibc module target nishchit korar jonno explicit architecture pass kora holo
-RUN npm config set supportedArchitectures --json '{"os":["linux"],"cpu":["x64"]}' \
-  && npm ci
+# npm ci-er bodle npm install bebohar kora holo
+# jate Debian/Linux environment-er sothik native binary auto-install hoy
+RUN npm install
 
 FROM deps AS build
 WORKDIR /app
@@ -14,7 +14,7 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-# Docker registry-te absolute stable mainline image
+# Stable official Nginx debian image
 FROM nginx:1.27.0 AS runtime
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
@@ -32,6 +32,5 @@ USER nginx
 
 EXPOSE 8080
 
-# Nginx container internal test config command
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD nginx -t || exit 1
