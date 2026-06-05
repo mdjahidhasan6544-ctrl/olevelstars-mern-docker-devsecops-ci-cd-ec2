@@ -6,5 +6,5 @@
 # Valid examples:
 # CVE-2026-12345
 # AVD-DS-0002
-# CVE-2026-33671
+CVE-2026-33671
 # Do not suppress secrets. Remove exposed credentials and rotate them instead.
