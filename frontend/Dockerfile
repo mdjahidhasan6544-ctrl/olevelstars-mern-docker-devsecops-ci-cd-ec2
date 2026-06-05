@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20.15-slim AS deps
+# Node version 22-slim kora holo Vite er requirement anujayi
+FROM node:22-slim AS deps
 WORKDIR /app
 
 COPY package*.json ./
-# Lockfile bypass kore ekebare fresh linux native binary install korar jonno
 RUN rm -rf package-lock.json node_modules && npm install
 
 FROM deps AS build
@@ -13,7 +13,6 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-# Docker registry-te absolute stable mainline image
 FROM nginx:1.27.0 AS runtime
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
@@ -31,6 +30,5 @@ USER nginx
 
 EXPOSE 8080
 
-# Nginx container internal test config command
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD nginx -t || exit 1
