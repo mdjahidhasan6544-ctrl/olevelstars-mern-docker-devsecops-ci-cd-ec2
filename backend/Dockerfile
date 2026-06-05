@@ -4,7 +4,8 @@ FROM node:20.15-slim AS prod-deps
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+# Backend eo same bhabe lockfile bypass kora holo jate kono dependency error na ashe
+RUN rm -rf package-lock.json node_modules && npm install --omit=dev && npm cache clean --force
 
 FROM node:22-slim AS runtime
 ENV NODE_ENV=production
