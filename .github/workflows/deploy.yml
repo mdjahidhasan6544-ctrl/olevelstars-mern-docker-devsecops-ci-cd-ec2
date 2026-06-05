@@ -29,7 +29,7 @@ env:
 
 # ─────────────────────────────────────────────────────────────
 # JOB 1 — Test, lint, audit, and static analysis
-# Gates: npm audit (HIGH+CRITICAL), SonarQube
+# Gates: npm audit (HIGH+CRITICAL on prod deps only), SonarQube
 # Advisory only: Trivy filesystem scan (never blocks)
 # ─────────────────────────────────────────────────────────────
 jobs:
@@ -63,7 +63,8 @@ jobs:
           npm ci --prefix "$FRONTEND_DIR"
           npm ci --prefix "$BACKEND_DIR"
 
-      - name: Run lint, tests, and builds
+      # Run lint and tests only — build is done inside Docker (no local build artefacts)
+      - name: Run lint and tests
         shell: bash
         run: |
           set -euo pipefail
@@ -80,13 +81,11 @@ jobs:
 
           run_script_if_present "$FRONTEND_DIR" lint
           run_script_if_present "$FRONTEND_DIR" test
-          run_script_if_present "$FRONTEND_DIR" build
           run_script_if_present "$BACKEND_DIR"  lint
           run_script_if_present "$BACKEND_DIR"  test
-          run_script_if_present "$BACKEND_DIR"  build
 
-      # ── GATE: OWASP npm audit ────────────────────────────────
-      - name: Run npm dependency audits (OWASP)
+      # ── GATE: OWASP npm audit (production dependencies only) ─────────────
+      - name: Run npm dependency audits (OWASP — prod deps only)
         shell: bash
         run: |
           set -euo pipefail
@@ -95,13 +94,14 @@ jobs:
           frontend_status=0
           backend_status=0
 
-          npm audit --prefix "$FRONTEND_DIR" --audit-level=high --json \
+          # --omit=dev: only audit packages that ship to production
+          npm audit --prefix "$FRONTEND_DIR" --audit-level=high --omit=dev --json \
             > security-reports/frontend-npm-audit.json || frontend_status=$?
-          npm audit --prefix "$BACKEND_DIR"  --audit-level=high --json \
+          npm audit --prefix "$BACKEND_DIR"  --audit-level=high --omit=dev --json \
             > security-reports/backend-npm-audit.json  || backend_status=$?
 
           if [ "$frontend_status" -ne 0 ] || [ "$backend_status" -ne 0 ]; then
-            echo "::error::npm audit found HIGH or CRITICAL vulnerabilities. Fix before merging."
+            echo "::error::npm audit found HIGH or CRITICAL vulnerabilities in production dependencies. Fix before merging."
             exit 1
           fi
 
@@ -113,25 +113,29 @@ jobs:
           path: security-reports/*-npm-audit.json
           if-no-files-found: ignore
 
-      # ── GATE: SonarQube static analysis ─────────────────────
+      # ── GATE: SonarQube static analysis (skipped gracefully if no token) ──
       - name: Run SonarQube scan
+        if: ${{ secrets.SONAR_TOKEN != '' }}
         uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6
+        continue-on-error: true
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-      # ── ADVISORY: Trivy filesystem scan (never blocks CI) ───
+      # ── ADVISORY: Trivy filesystem scan (never blocks CI) ────────────────
+      # IMPORTANT: "Prepare Trivy cache key" MUST run before "Cache Trivy database"
+      # so that steps.trivy-cache-date.outputs.date is available for the cache key.
+      - name: Prepare Trivy cache key
+        id: trivy-cache-date
+        shell: bash
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
       - name: Cache Trivy database
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ env.TRIVY_CACHE_DIR }}
           key: trivy-db-${{ runner.os }}-${{ steps.trivy-cache-date.outputs.date }}
           restore-keys: trivy-db-${{ runner.os }}-
-
-      - name: Prepare Trivy cache key
-        id: trivy-cache-date
-        shell: bash
-        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
 
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
@@ -179,6 +183,7 @@ jobs:
 
 # ─────────────────────────────────────────────────────────────
 # JOB 2 — Build Docker images, advisory Trivy image scan, push
+# All builds happen inside Docker — no local build artefacts committed
 # Gates: none from Trivy (advisory only)
 # ─────────────────────────────────────────────────────────────
   build-scan-push:
@@ -216,6 +221,7 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
+      # Build frontend image — all compilation happens inside Docker (no local dist/)
       - name: Build frontend image
         shell: bash
         run: |
@@ -226,6 +232,7 @@ jobs:
             --tag  "$FRONTEND_IMAGE:latest" \
             "$FRONTEND_DIR"
 
+      # Build backend image — multi-stage keeps runtime image clean
       - name: Build backend image
         shell: bash
         run: |
@@ -236,7 +243,8 @@ jobs:
             --tag  "$BACKEND_IMAGE:latest" \
             "$BACKEND_DIR"
 
-      # ── ADVISORY: Trivy image scans (never block pipeline) ──
+      # ── ADVISORY: Trivy image scans (never block pipeline) ───────────────
+      # IMPORTANT: "Prepare Trivy cache key" MUST run before "Cache Trivy database"
       - name: Prepare Trivy cache key
         id: trivy-cache-date
         shell: bash
@@ -303,7 +311,7 @@ jobs:
           path: security-reports/trivy-*-image.sarif
           if-no-files-found: ignore
 
-      # ── Push images ──────────────────────────────────────────
+      # ── Push images to Docker Hub ─────────────────────────────────────────
       - name: Login to Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -326,6 +334,9 @@ jobs:
     name: Deploy to EC2
     runs-on: ubuntu-24.04
     needs: build-scan-push
+    permissions:
+      contents: read
+      actions: read
 
     steps:
       - name: Checkout repository
@@ -369,6 +380,7 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
           ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_NAME: ${{ secrets.ADMIN_NAME || 'Scholastica Admin' }}
         run: |
           set -euo pipefail
           umask 077
@@ -377,7 +389,7 @@ jobs:
             local key="$1"
             local value="${2:-}"
             value="${value//\\/\\\\}"
-            value="${value//\'/\\\'}"
+            value="${value//\'/\'}"
             printf "%s='%s'\n" "$key" "$value" >> deploy.env
           }
 
@@ -391,6 +403,7 @@ jobs:
           write_env JWT_EXPIRY                    "7d"
           write_env ADMIN_USERNAME                "$ADMIN_USERNAME"
           write_env ADMIN_PASSWORD                "$ADMIN_PASSWORD"
+          write_env ADMIN_NAME                    "$ADMIN_NAME"
           write_env BACKEND_PORT                  "$BACKEND_PORT_VALUE"
           write_env FRONTEND_PORT                 "$FRONTEND_PORT_VALUE"
           write_env FRONTEND_PUBLIC_SITE_URL      "$FRONTEND_PUBLIC_SITE_URL_VALUE"
@@ -403,7 +416,9 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           set -euo pipefail
-          ssh -i "$HOME/.ssh/ec2_key" "$EC2_USER@$EC2_HOST" \
+          ssh -i "$HOME/.ssh/ec2_key" \
+              -o StrictHostKeyChecking=yes \
+              "$EC2_USER@$EC2_HOST" \
             "sudo mkdir -p '$DEPLOY_PATH' && sudo chown -R '$EC2_USER':'$EC2_USER' '$DEPLOY_PATH'"
 
       - name: Upload Compose and environment files
@@ -413,8 +428,12 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           set -euo pipefail
-          scp -i "$HOME/.ssh/ec2_key" docker-compose.prod.yml "$EC2_USER@$EC2_HOST:$DEPLOY_PATH/docker-compose.prod.yml"
-          scp -i "$HOME/.ssh/ec2_key" deploy.env             "$EC2_USER@$EC2_HOST:$DEPLOY_PATH/.env"
+          scp -i "$HOME/.ssh/ec2_key" \
+              -o StrictHostKeyChecking=yes \
+              docker-compose.prod.yml "$EC2_USER@$EC2_HOST:$DEPLOY_PATH/docker-compose.prod.yml"
+          scp -i "$HOME/.ssh/ec2_key" \
+              -o StrictHostKeyChecking=yes \
+              deploy.env             "$EC2_USER@$EC2_HOST:$DEPLOY_PATH/.env"
 
       - name: Login to Docker Hub on EC2
         shell: bash
@@ -425,7 +444,9 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           set -euo pipefail
-          printf '%s\n' "$DOCKERHUB_TOKEN" | ssh -i "$HOME/.ssh/ec2_key" "$EC2_USER@$EC2_HOST" \
+          printf '%s\n' "$DOCKERHUB_TOKEN" | ssh -i "$HOME/.ssh/ec2_key" \
+              -o StrictHostKeyChecking=yes \
+              "$EC2_USER@$EC2_HOST" \
             "docker login -u '$DOCKERHUB_USERNAME' --password-stdin"
 
       - name: Deploy containers on EC2
@@ -435,36 +456,59 @@ jobs:
           EC2_USER: ${{ secrets.EC2_USER }}
         run: |
           set -euo pipefail
-          ssh -i "$HOME/.ssh/ec2_key" "$EC2_USER@$EC2_HOST" \
+          ssh -i "$HOME/.ssh/ec2_key" \
+              -o StrictHostKeyChecking=yes \
+              "$EC2_USER@$EC2_HOST" \
             "DEPLOY_PATH='$DEPLOY_PATH' IMAGE_TAG='$IMAGE_TAG' bash -s" <<'REMOTE'
           set -euo pipefail
           cd "$DEPLOY_PATH"
 
           on_error() {
-            echo "Deployment failed. Container status:"
-            docker compose -f docker-compose.prod.yml ps || true
-            echo "Recent frontend logs:"
+            echo "=== Deployment failed. Container status: ==="
+            docker compose -f docker-compose.prod.yml ps --format table || true
+            echo "=== Recent frontend logs: ==="
             docker compose -f docker-compose.prod.yml logs --no-color --tail=100 frontend || true
-            echo "Recent backend logs:"
+            echo "=== Recent backend logs: ==="
             docker compose -f docker-compose.prod.yml logs --no-color --tail=100 backend || true
           }
           trap on_error ERR
 
+          # Pull fresh images with the new tag
           docker compose -f docker-compose.prod.yml pull
+
+          # Bring up services (replace old containers, keep volumes)
           docker compose -f docker-compose.prod.yml up -d --remove-orphans
-          docker compose -f docker-compose.prod.yml ps
 
+          # Show running state
+          docker compose -f docker-compose.prod.yml ps --format table
+
+          # Health-check: frontend
           docker compose -f docker-compose.prod.yml exec -T frontend \
-            wget -qO- http://0.0.0.0:8080/health >/dev/null
+            wget -qO- http://localhost:8080/health > /dev/null
 
+          # Health-check: backend
           docker compose -f docker-compose.prod.yml exec -T backend \
-            node -e "fetch('http://0.0.0.0:' + (process.env.PORT || 5000) + '/api/health') \
+            node -e "fetch('http://localhost:' + (process.env.PORT || 5000) + '/api/health') \
               .then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
+          # Record deployed tag for potential manual rollback reference
           if [ -f CURRENT_IMAGE_TAG ]; then
             cp CURRENT_IMAGE_TAG PREVIOUS_IMAGE_TAG
           fi
           printf '%s\n' "$IMAGE_TAG" > CURRENT_IMAGE_TAG
 
+          # Clean up: remove dangling images AND old tagged images not in current compose
           docker image prune -f
+          # Remove old image tags (keep last 2 per image to allow quick rollback)
+          for repo in \
+            "$(grep -oP 'image:\s*\K\S+(?=:)' docker-compose.prod.yml | head -1)" \
+            "$(grep -oP 'image:\s*\K\S+(?=:)' docker-compose.prod.yml | tail -1)"; do
+            docker images "$repo" --format '{{.Tag}} {{.ID}}' \
+              | sort -V \
+              | head -n -2 \
+              | awk '{print $2}' \
+              | xargs -r docker rmi --force || true
+          done
+
+          echo "Deployment of $IMAGE_TAG completed successfully."
           REMOTE

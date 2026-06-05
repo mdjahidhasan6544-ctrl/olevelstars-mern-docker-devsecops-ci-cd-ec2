@@ -1,15 +1,33 @@
+# Ignore build artefacts and local tooling — not needed inside the Docker image
 node_modules
 dist
 build
 coverage
+
+# Environment files — injected at runtime via Docker Compose / CI secrets
 .env
 .env.*
+.env.example
+
+# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# VCS and CI
 .git
+.gitignore
 .github
+
+# Docker config (no self-referential copies)
 Dockerfile
+.dockerignore
 docker-compose*.yml
+
+# Docs / tooling not needed in the build
 README.md
+DEPLOYMENT.md
+.trivyignore
+sonar-project.properties
+ci-cd-prompt.txt

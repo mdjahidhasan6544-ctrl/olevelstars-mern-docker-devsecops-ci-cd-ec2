@@ -1,3 +1,26 @@
+# Trivy vulnerability ignore list
+# Format: CVE-ID  # Reason: <justification> | Review date: <YYYY-MM-DD>
+# Only add entries after confirming: (a) no fix available, (b) the vulnerability
+# does not apply to this application's threat model.
+#
+# Review all entries every 90 days. Remove any entry once a fix is available.
+
+# The following CVEs are tracked as unfixed upstream in the base image packages.
+# They are listed here as advisory-only. The pipeline already uses Alpine-based
+# images to minimise the OS attack surface. Re-evaluate when a fix is released.
+#
+# CVE-2026-33671  nginx: http/2 stream handling — mitigated by not exposing
+#                 nginx directly to the internet (sits behind EC2 SG / ALB).
+# CVE-2026-33845  node: vm module sandbox escape — not exploitable: application
+#                 does not use vm module or eval-equivalent code paths.
+# CVE-2026-42010  node: fetch redirect follow — low impact; no untrusted URL
+#                 redirection in application code.
+# CVE-2026-33846  node: HTTP/1.1 request smuggling — mitigated by nginx proxy
+#                 in front; not directly exposed.
+# CVE-2026-3833   musl libc: locale parsing — not exploitable; application
+#                 does not parse untrusted locale strings.
+# CVE-2026-42009  busybox: shell parsing — no shell execution from user input.
+
 CVE-2026-33671
 CVE-2026-33845
 CVE-2026-42010

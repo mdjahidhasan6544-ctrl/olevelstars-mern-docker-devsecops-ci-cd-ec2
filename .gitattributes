@@ -1,0 +1,58 @@
+# .gitattributes — normalise line endings for cross-platform safety
+# Docker and shell scripts MUST have LF line endings on Linux (EC2/CI runners).
+# Windows developers should use Git's automatic conversion (core.autocrlf=true).
+
+# Default: normalise everything to LF in the repo
+* text=auto eol=lf
+
+# Shell scripts — always LF
+*.sh text eol=lf
+
+# Dockerfiles — always LF (CRLF breaks CMD/RUN parsing on Linux)
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+
+# YAML CI/CD files — always LF
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# nginx config templates — always LF
+*.conf text eol=lf
+*.conf.template text eol=lf
+*.template text eol=lf
+
+# Node / web source
+*.js text eol=lf
+*.jsx text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+
+# Markdown and text docs
+*.md text eol=lf
+*.txt text eol=lf
+*.properties text eol=lf
+
+# Git/Docker config files
+.gitignore text eol=lf
+.dockerignore text eol=lf
+.trivyignore text eol=lf
+.env.example text eol=lf
+
+# Binary files — never touch line endings
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.otf binary
+*.zip binary
+*.tar binary
+*.gz binary
