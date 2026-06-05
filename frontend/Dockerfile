@@ -4,9 +4,8 @@ FROM node:20.15-slim AS deps
 WORKDIR /app
 
 COPY package*.json ./
-# npm ci-er bodle npm install bebohar kora holo
-# jate Debian/Linux environment-er sothik native binary auto-install hoy
-RUN npm install
+# Lockfile bypass kore ekebare fresh linux native binary install korar jonno
+RUN rm -rf package-lock.json node_modules && npm install
 
 FROM deps AS build
 WORKDIR /app
@@ -14,7 +13,7 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-# Stable official Nginx debian image
+# Docker registry-te absolute stable mainline image
 FROM nginx:1.27.0 AS runtime
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
@@ -32,5 +31,6 @@ USER nginx
 
 EXPOSE 8080
 
+# Nginx container internal test config command
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD nginx -t || exit 1
