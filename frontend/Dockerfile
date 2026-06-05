@@ -12,7 +12,8 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-FROM nginx:1.27-alpine AS runtime
+# Nginx alpine boddle standard debian slim use kora holo
+FROM nginx:1.27-slim AS runtime
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
@@ -30,4 +31,4 @@ USER nginx
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -qO- http://0.0.0.0:8080/health >/dev/null || exit 1
+  CMD curl -f http://0.0.0.0:8080/health || exit 1
