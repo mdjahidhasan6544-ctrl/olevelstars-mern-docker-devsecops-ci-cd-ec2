@@ -17,7 +17,8 @@ concurrency:
 env:
   FRONTEND_DIR: frontend
   BACKEND_DIR: backend
-  NODE_VERSION: "20"
+  # Version 22 e upgrade kora holo
+  NODE_VERSION: "22"
   IMAGE_TAG: ${{ github.sha }}
   RAW_REPO_NAME: ${{ vars.REPO_NAME || github.event.repository.name }}
   NODE_ENV_VALUE: ${{ vars.NODE_ENV || 'production' }}
