@@ -4,7 +4,9 @@ FROM node:20.15-slim AS deps
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+# Vite/Rolldown er glibc module target nishchit korar jonno explicit architecture pass kora holo
+RUN npm config set supportedArchitectures --json '{"os":["linux"],"cpu":["x64"]}' \
+  && npm ci
 
 FROM deps AS build
 WORKDIR /app
@@ -12,7 +14,7 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-# Docker-er shobcheye stable mainline debian-slim nginx image use kora holo
+# Docker registry-te absolute stable mainline image
 FROM nginx:1.27.0 AS runtime
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
@@ -30,6 +32,6 @@ USER nginx
 
 EXPOSE 8080
 
-# Mainline Debian image-e curl/wget compatibility perfectly thake
+# Nginx container internal test config command
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD nginx -t || exit 1
