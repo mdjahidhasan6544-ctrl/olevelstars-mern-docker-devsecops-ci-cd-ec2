@@ -10,93 +10,461 @@ permissions:
   contents: read
   actions: read
 
+concurrency:
+  group: ec2-production-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   FRONTEND_DIR: frontend
   BACKEND_DIR: backend
   NODE_VERSION: "22"
   IMAGE_TAG: ${{ github.sha }}
-  REPO_NAME: ${{ github.event.repository.name }}
+  RAW_REPO_NAME: ${{ vars.REPO_NAME || github.event.repository.name }}
+  NODE_ENV_VALUE: ${{ vars.NODE_ENV || 'production' }}
+  FRONTEND_PORT_VALUE: ${{ vars.FRONTEND_PORT || '80' }}
+  BACKEND_PORT_VALUE: ${{ vars.BACKEND_PORT || '5000' }}
+  FRONTEND_PUBLIC_SITE_URL_VALUE: ${{ vars.FRONTEND_PUBLIC_SITE_URL || '' }}
+  TRIVY_VERSION: v0.71.0
+  TRIVY_CACHE_DIR: .trivycache
 
+# ─────────────────────────────────────────────────────────────
+# JOB 1 — Test, lint, audit, and static analysis
+# Gates: npm audit (HIGH+CRITICAL), SonarQube
+# Advisory only: Trivy filesystem scan (never blocks)
+# ─────────────────────────────────────────────────────────────
 jobs:
-
-# =========================
-# 1. TEST + SCAN (NO BLOCK)
-# =========================
-  test:
+  test-and-scan:
+    name: Test and scan source
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
 
-      - run: npm ci --prefix frontend
-      - run: npm ci --prefix backend
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix "$FRONTEND_DIR"
+          npm ci --prefix "$BACKEND_DIR"
 
-      - name: Trivy Scan (non-blocking)
-        uses: aquasecurity/setup-trivy@v0.3.1
+      - name: Run lint, tests, and builds
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          run_script_if_present() {
+            local dir="$1"
+            local script="$2"
+            if node -e "const s = require('./${dir}/package.json').scripts || {}; process.exit(s['${script}'] ? 0 : 1);"; then
+              npm --prefix "$dir" run "$script"
+            else
+              echo "No '${script}' script in ${dir} — skipping."
+            fi
+          }
+
+          run_script_if_present "$FRONTEND_DIR" lint
+          run_script_if_present "$FRONTEND_DIR" test
+          run_script_if_present "$FRONTEND_DIR" build
+          run_script_if_present "$BACKEND_DIR"  lint
+          run_script_if_present "$BACKEND_DIR"  test
+          run_script_if_present "$BACKEND_DIR"  build
+
+      # ── GATE: OWASP npm audit ────────────────────────────────
+      - name: Run npm dependency audits (OWASP)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p security-reports
+
+          frontend_status=0
+          backend_status=0
+
+          npm audit --prefix "$FRONTEND_DIR" --audit-level=high --json \
+            > security-reports/frontend-npm-audit.json || frontend_status=$?
+          npm audit --prefix "$BACKEND_DIR"  --audit-level=high --json \
+            > security-reports/backend-npm-audit.json  || backend_status=$?
+
+          if [ "$frontend_status" -ne 0 ] || [ "$backend_status" -ne 0 ]; then
+            echo "::error::npm audit found HIGH or CRITICAL vulnerabilities. Fix before merging."
+            exit 1
+          fi
+
+      - name: Upload npm audit reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          version: v0.71.0
+          name: npm-audit-reports
+          path: security-reports/*-npm-audit.json
+          if-no-files-found: ignore
 
-      - run: |
-          trivy fs . --exit-code 0 --severity HIGH,CRITICAL
+      # ── GATE: SonarQube static analysis ─────────────────────
+      - name: Run SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@fd88b7d7ccbaefd23d8f36f73b59db7a3d246602 # v6
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
-# =========================
-# 2. BUILD + PUSH
-# =========================
-  build:
-    needs: test
+      # ── ADVISORY: Trivy filesystem scan (never blocks CI) ───
+      - name: Cache Trivy database
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.TRIVY_CACHE_DIR }}
+          key: trivy-db-${{ runner.os }}-${{ steps.trivy-cache-date.outputs.date }}
+          restore-keys: trivy-db-${{ runner.os }}-
+
+      - name: Prepare Trivy cache key
+        id: trivy-cache-date
+        shell: bash
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          cache: true
+
+      - name: Trivy filesystem scan (advisory — non-blocking)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p security-reports
+
+          # exit-code 0: findings are reported but never fail the pipeline.
+          # Review the uploaded SARIF in GitHub Security > Code scanning alerts.
+          trivy fs \
+            --scanners vuln,secret,misconfig \
+            --severity HIGH,CRITICAL \
+            --ignore-unfixed \
+            --ignorefile .trivyignore \
+            --skip-dirs "$FRONTEND_DIR/node_modules" \
+            --skip-dirs "$BACKEND_DIR/node_modules" \
+            --cache-dir  "$TRIVY_CACHE_DIR" \
+            --skip-version-check \
+            --no-progress \
+            --format sarif \
+            --output security-reports/trivy-fs.sarif \
+            --exit-code 0 \
+            .
+
+      - name: Upload Trivy filesystem SARIF to GitHub Security
+        if: always() && hashFiles('security-reports/trivy-fs.sarif') != ''
+        uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7 # v4
+        with:
+          sarif_file: security-reports/trivy-fs.sarif
+          category: trivy-filesystem
+
+      - name: Upload Trivy filesystem report artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-filesystem-report
+          path: security-reports/trivy-fs.sarif
+          if-no-files-found: ignore
+
+# ─────────────────────────────────────────────────────────────
+# JOB 2 — Build Docker images, advisory Trivy image scan, push
+# Gates: none from Trivy (advisory only)
+# ─────────────────────────────────────────────────────────────
+  build-scan-push:
+    name: Build, scan, and push images
     runs-on: ubuntu-24.04
+    needs: test-and-scan
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
-      - name: Build Docker Images
+      - name: Normalize image metadata
+        shell: bash
         run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/frontend:${IMAGE_TAG} ./frontend
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/backend:${IMAGE_TAG} ./backend
+          set -euo pipefail
+          repo_name="$(printf '%s' "$RAW_REPO_NAME" | tr -c 'A-Za-z0-9_.-' '-' | sed -E 's/^-+|-+$//g')"
 
-      - name: Docker Login
-        run: echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+          if [ -z "$repo_name" ]; then
+            echo "::error::Repository name resolved to an empty value."
+            exit 1
+          fi
 
-      - name: Push Images
+          {
+            echo "REPO_NAME=$repo_name"
+            echo "FRONTEND_IMAGE=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${repo_name}-frontend"
+            echo "BACKEND_IMAGE=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${repo_name}-backend"
+          } >> "$GITHUB_ENV"
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build frontend image
+        shell: bash
         run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/frontend:${IMAGE_TAG}
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/backend:${IMAGE_TAG}
+          set -euo pipefail
+          docker buildx build --load \
+            --file "$FRONTEND_DIR/Dockerfile" \
+            --tag  "$FRONTEND_IMAGE:$IMAGE_TAG" \
+            --tag  "$FRONTEND_IMAGE:latest" \
+            "$FRONTEND_DIR"
 
-# =========================
-# 3. DEPLOY TO EC2
-# =========================
+      - name: Build backend image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx build --load \
+            --file "$BACKEND_DIR/Dockerfile" \
+            --tag  "$BACKEND_IMAGE:$IMAGE_TAG" \
+            --tag  "$BACKEND_IMAGE:latest" \
+            "$BACKEND_DIR"
+
+      # ── ADVISORY: Trivy image scans (never block pipeline) ──
+      - name: Prepare Trivy cache key
+        id: trivy-cache-date
+        shell: bash
+        run: echo "date=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Trivy database
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ env.TRIVY_CACHE_DIR }}
+          key: trivy-db-${{ runner.os }}-${{ steps.trivy-cache-date.outputs.date }}
+          restore-keys: trivy-db-${{ runner.os }}-
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          cache: true
+
+      - name: Trivy image scans (advisory — non-blocking)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p security-reports
+
+          # exit-code 0: findings are visible in artifacts and GitHub Security
+          # but will NOT stop the deployment. Share reports with your developer.
+          for target in "frontend:$FRONTEND_IMAGE" "backend:$BACKEND_IMAGE"; do
+            name="${target%%:*}"
+            image="${target#*:}"
+
+            trivy image \
+              --scanners vuln,secret \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --ignorefile .trivyignore \
+              --cache-dir  "$TRIVY_CACHE_DIR" \
+              --skip-version-check \
+              --no-progress \
+              --format sarif \
+              --output "security-reports/trivy-${name}-image.sarif" \
+              --exit-code 0 \
+              "${image}:$IMAGE_TAG"
+          done
+
+      - name: Upload frontend image SARIF to GitHub Security
+        if: always() && hashFiles('security-reports/trivy-frontend-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7 # v4
+        with:
+          sarif_file: security-reports/trivy-frontend-image.sarif
+          category: trivy-frontend-image
+
+      - name: Upload backend image SARIF to GitHub Security
+        if: always() && hashFiles('security-reports/trivy-backend-image.sarif') != ''
+        uses: github/codeql-action/upload-sarif@411bbbe57033eedfc1a82d68c01345aa96c737d7 # v4
+        with:
+          sarif_file: security-reports/trivy-backend-image.sarif
+          category: trivy-backend-image
+
+      - name: Upload Trivy image report artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-image-reports
+          path: security-reports/trivy-*-image.sarif
+          if-no-files-found: ignore
+
+      # ── Push images ──────────────────────────────────────────
+      - name: Login to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Push images to Docker Hub
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker push "$FRONTEND_IMAGE:$IMAGE_TAG"
+          docker push "$FRONTEND_IMAGE:latest"
+          docker push "$BACKEND_IMAGE:$IMAGE_TAG"
+          docker push "$BACKEND_IMAGE:latest"
+
+# ─────────────────────────────────────────────────────────────
+# JOB 3 — Deploy to EC2
+# ─────────────────────────────────────────────────────────────
   deploy:
-    needs: build
+    name: Deploy to EC2
     runs-on: ubuntu-24.04
+    needs: build-scan-push
 
     steps:
-      - name: Deploy via SSH
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
-          script: |
-            set -e
+          persist-credentials: false
 
-            DEPLOY_PATH=/opt/app
+      - name: Prepare deployment metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          repo_name="$(printf '%s' "$RAW_REPO_NAME" | tr -c 'A-Za-z0-9_.-' '-' | sed -E 's/^-+|-+$//g')"
 
-            # FIX: folder missing issue
-            sudo mkdir -p $DEPLOY_PATH
-            sudo chown -R $USER:$USER $DEPLOY_PATH
+          if [ -z "$repo_name" ]; then
+            echo "::error::Repository name resolved to an empty value."
+            exit 1
+          fi
 
-            cd $DEPLOY_PATH
+          {
+            echo "REPO_NAME=$repo_name"
+            echo "DEPLOY_PATH=/opt/$repo_name"
+          } >> "$GITHUB_ENV"
 
-            docker login -u ${{ secrets.DOCKERHUB_USERNAME }} -p ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Configure SSH
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > "$HOME/.ssh/ec2_key"
+          chmod 600 "$HOME/.ssh/ec2_key"
+          ssh-keyscan -H "$EC2_HOST" >> "$HOME/.ssh/known_hosts"
 
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/frontend:${{ github.sha }}
-            docker pull ${{ secrets.DOCKERHUB_USERNAME }}/backend:${{ github.sha }}
+      - name: Generate deployment environment file
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ADMIN_USERNAME: ${{ secrets.ADMIN_USERNAME }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
 
-            docker compose down || true
-            docker compose up -d
+          write_env() {
+            local key="$1"
+            local value="${2:-}"
+            value="${value//\\/\\\\}"
+            value="${value//\'/\\\'}"
+            printf "%s='%s'\n" "$key" "$value" >> deploy.env
+          }
 
-            echo "✅ Deployment Successful"
+          : > deploy.env
+          write_env DOCKERHUB_USERNAME            "$DOCKERHUB_USERNAME"
+          write_env REPO_NAME                     "$REPO_NAME"
+          write_env IMAGE_TAG                     "$IMAGE_TAG"
+          write_env NODE_ENV                      "$NODE_ENV_VALUE"
+          write_env MONGODB_URI                   "$MONGODB_URI"
+          write_env JWT_SECRET                    "$JWT_SECRET"
+          write_env JWT_EXPIRY                    "7d"
+          write_env ADMIN_USERNAME                "$ADMIN_USERNAME"
+          write_env ADMIN_PASSWORD                "$ADMIN_PASSWORD"
+          write_env BACKEND_PORT                  "$BACKEND_PORT_VALUE"
+          write_env FRONTEND_PORT                 "$FRONTEND_PORT_VALUE"
+          write_env FRONTEND_PUBLIC_SITE_URL      "$FRONTEND_PUBLIC_SITE_URL_VALUE"
+          write_env CORS_ORIGIN                   "$FRONTEND_PUBLIC_SITE_URL_VALUE"
+
+      - name: Create EC2 deployment directory
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/ec2_key" "$EC2_USER@$EC2_HOST" \
+            "sudo mkdir -p '$DEPLOY_PATH' && sudo chown -R '$EC2_USER':'$EC2_USER' '$DEPLOY_PATH'"
+
+      - name: Upload Compose and environment files
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+          scp -i "$HOME/.ssh/ec2_key" docker-compose.prod.yml "$EC2_USER@$EC2_HOST:$DEPLOY_PATH/docker-compose.prod.yml"
+          scp -i "$HOME/.ssh/ec2_key" deploy.env             "$EC2_USER@$EC2_HOST:$DEPLOY_PATH/.env"
+
+      - name: Login to Docker Hub on EC2
+        shell: bash
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' "$DOCKERHUB_TOKEN" | ssh -i "$HOME/.ssh/ec2_key" "$EC2_USER@$EC2_HOST" \
+            "docker login -u '$DOCKERHUB_USERNAME' --password-stdin"
+
+      - name: Deploy containers on EC2
+        shell: bash
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i "$HOME/.ssh/ec2_key" "$EC2_USER@$EC2_HOST" \
+            "DEPLOY_PATH='$DEPLOY_PATH' IMAGE_TAG='$IMAGE_TAG' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$DEPLOY_PATH"
+
+          on_error() {
+            echo "Deployment failed. Container status:"
+            docker compose -f docker-compose.prod.yml ps || true
+            echo "Recent frontend logs:"
+            docker compose -f docker-compose.prod.yml logs --no-color --tail=100 frontend || true
+            echo "Recent backend logs:"
+            docker compose -f docker-compose.prod.yml logs --no-color --tail=100 backend || true
+          }
+          trap on_error ERR
+
+          docker compose -f docker-compose.prod.yml pull
+          docker compose -f docker-compose.prod.yml up -d --remove-orphans
+          docker compose -f docker-compose.prod.yml ps
+
+          docker compose -f docker-compose.prod.yml exec -T frontend \
+            wget -qO- http://0.0.0.0:8080/health >/dev/null
+
+          docker compose -f docker-compose.prod.yml exec -T backend \
+            node -e "fetch('http://0.0.0.0:' + (process.env.PORT || 5000) + '/api/health') \
+              .then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
+          if [ -f CURRENT_IMAGE_TAG ]; then
+            cp CURRENT_IMAGE_TAG PREVIOUS_IMAGE_TAG
+          fi
+          printf '%s\n' "$IMAGE_TAG" > CURRENT_IMAGE_TAG
+
+          docker image prune -f
+          REMOTE
