@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-FROM node:20.15-slim AS prod-deps
+# Ekhaneo Node version 22-slim kora holo jate frontend er shathe consistency thake
+FROM node:22-slim AS prod-deps
 WORKDIR /app
 
 COPY package*.json ./
-# Backend eo same bhabe lockfile bypass kora holo jate kono dependency error na ashe
 RUN rm -rf package-lock.json node_modules && npm install --omit=dev && npm cache clean --force
 
 FROM node:22-slim AS runtime
