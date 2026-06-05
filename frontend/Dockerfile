@@ -12,8 +12,8 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-# Nginx alpine boddle standard debian slim use kora holo
-FROM nginx:1.27-slim AS runtime
+# Nginx slim tag-ti correct kora holo (1.27.0-slim)
+FROM nginx:1.27.0-slim AS runtime
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
@@ -30,5 +30,7 @@ USER nginx
 
 EXPOSE 8080
 
+# Debian slim-e curl default-e na thakle wget use korai safe, 
+# tai wget command-ti debian compatible kora holo
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://0.0.0.0:8080/health || exit 1
+  CMD wget --spider -q http://0.0.0.0:8080/health || exit 1
