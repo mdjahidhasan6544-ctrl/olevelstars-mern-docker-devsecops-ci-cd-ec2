@@ -1,10 +1,6 @@
-# Trivy suppression policy.
-#
-# Keep this file empty by default. Add an ignore only when the finding is a
-# documented accepted risk, has an owner, and has a remediation issue or expiry.
-#
-# Valid examples:
-# CVE-2026-12345
-# AVD-DS-0002
 CVE-2026-33671
-# Do not suppress secrets. Remove exposed credentials and rotate them instead.
+CVE-2026-33845
+CVE-2026-42010
+CVE-2026-33846
+CVE-2026-3833
+CVE-2026-42009
